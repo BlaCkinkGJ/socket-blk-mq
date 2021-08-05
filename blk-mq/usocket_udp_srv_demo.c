@@ -1,11 +1,11 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define PORT 4444
 #define BUF_SIZE 1024
@@ -36,10 +36,11 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  while(1) {
+  while (1) {
     memset(buf, 0, sizeof(buf));
-    len = recvfrom(sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&addr_cli, &addr_len);
-    if (len > 0)  {
+    len = recvfrom(sockfd, buf, sizeof(buf), 0, (struct sockaddr *)&addr_cli,
+                   &addr_len);
+    if (len > 0) {
       printf("got message: %s\n", buf);
     }
   }

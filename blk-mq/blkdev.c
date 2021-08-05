@@ -4,20 +4,19 @@
 // - link:
 // https://pr0gr4m.tistory.com/entry/Linux-Kernel-5-Block-Device-Driver-Example
 #include "blkdev.h"
+#include "ksocket.h"
 #include <linux/blk-mq.h>
 #include <linux/blkdev.h>
-#include <linux/net.h>
-#include <linux/in.h>
 #include <linux/device.h>
 #include <linux/genhd.h>
 #include <linux/hdreg.h>
-#include <linux/socket.h>
-#include <linux/net.h>
+#include <linux/in.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/net.h>
+#include <linux/socket.h>
 #include <linux/uaccess.h>
-#include "ksocket.h"
 
 #define BUF_LEN 1024
 
@@ -48,19 +47,18 @@ static int do_request(struct request *rq, unsigned int *nr_bytes) {
     if (b_len < 0)
       b_len = 0;
 
-
     if (rq_data_dir(rq) == WRITE) {
       unsigned long size = b_len;
-      if (size >= BUF_LEN ) {
+      if (size >= BUF_LEN) {
         size = BUF_LEN - 1;
       }
       memcpy(buf, b_buf, size);
       buf[size] = '\0';
       printk("send: %s %ld", (const char *)b_buf, b_len);
-      ksendto(sockfd_cli, buf, b_len + 1, 0,(struct sockaddr*)&addr_srv, sizeof(addr_srv));
+      ksendto(sockfd_cli, buf, b_len + 1, 0, (struct sockaddr *)&addr_srv,
+              sizeof(addr_srv));
       memcpy(dev->data + pos, b_buf, b_len);
-    }
-    else
+    } else
       memcpy(b_buf, dev->data + pos, b_len);
 
     pos += b_len;
@@ -270,21 +268,20 @@ static int __init blkdev_init(void) {
   int ret = SUCCESS;
 
   //// start of udp initialize ////
-	memset(&addr_srv, 0, sizeof(addr_srv));
-	addr_srv.sin_family = AF_INET;
-	addr_srv.sin_port = htons(4444);
-	addr_srv.sin_addr.s_addr = inet_addr("127.0.0.1");;
-	addr_len = sizeof(struct sockaddr_in);
-	
-	sockfd_cli = ksocket(AF_INET, SOCK_DGRAM, 0);
-	printk("sockfd_cli = 0x%p\n", sockfd_cli);
-	if (sockfd_cli == NULL)
-	{
-		printk("socket failed\n");
-		return -1;
-	}
-  //// end of udp initialize ////
+  memset(&addr_srv, 0, sizeof(addr_srv));
+  addr_srv.sin_family = AF_INET;
+  addr_srv.sin_port = htons(4444);
+  addr_srv.sin_addr.s_addr = inet_addr("192.168.1.8");
+  ;
+  addr_len = sizeof(struct sockaddr_in);
 
+  sockfd_cli = ksocket(AF_INET, SOCK_DGRAM, 0);
+  printk("sockfd_cli = 0x%p\n", sockfd_cli);
+  if (sockfd_cli == NULL) {
+    printk("socket failed\n");
+    return -1;
+  }
+  //// end of udp initialize ////
 
   blkdev_major = register_blkdev(blkdev_major, BLKDEV_NAME);
   if (blkdev_major <= 0) {

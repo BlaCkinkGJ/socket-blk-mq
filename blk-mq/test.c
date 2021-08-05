@@ -3,6 +3,7 @@
 // - author: pr0gr4m
 // - link:
 // https://pr0gr4m.tistory.com/entry/Linux-Kernel-5-Block-Device-Driver-Example
+#define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -14,36 +15,21 @@
 #define DEV_NAME "/dev/pr0gr4m-blkdev0"
 
 int main() {
-  static char buf[1024];
+  static char buf[BUF_LEN];
   int fd;
+  int i;
   off_t off;
 
-  if ((fd = open(DEV_NAME, O_RDWR)) < 0) {
+  if ((fd = open(DEV_NAME, O_RDWR | O_SYNC | O_DIRECT)) < 0) {
     perror("open error");
   }
 
-  if (write(fd, "hello", strlen("hello")) < 0) {
-    perror("write error");
-  }
-
-  off = lseek(fd, 0, SEEK_SET);
-  if (read(fd, buf, strlen("hello")) < 0) {
-    perror("read error");
-  } else {
-    printf("%s\n", buf);
-  }
-  fsync(fd);
-
-  off = lseek(fd, 0, SEEK_SET);
-  if (write(fd, "pr0gr4m", strlen("pr0gr4m")) < 0) {
-    perror("write error");
-  }
-
-  off = lseek(fd, 0, SEEK_SET);
-  if (read(fd, buf, strlen("pr0gr4m")) < 0) {
-    perror("read error");
-  } else {
-    printf("%s\n", buf);
+  for (i = 0; i < 10000; i++) {
+    sprintf(buf, "%d", i);
+    lseek(fd, 0, SEEK_SET);
+    if (write(fd, buf, strlen(buf)) < 0) {
+      perror("write error");
+    }
   }
 
   if (close(fd) != 0) {
