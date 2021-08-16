@@ -1,12 +1,12 @@
 CC=gcc
 WRITE_OBJS=test.o
 WRITE_TEST=test
-SERVER_OBJS=usocket_udp_srv_demo.o
+SERVER_OBJS=usocket_srv.o
 SERVER_TEST=usocket_srv
 obj-m+=blkdev.o
 
-EXTRA_LDFLAGS := -I/home/gndprop/dgist/blk-socket/ksocket
-KBUILD_EXTRA_SYMBOLS='/home/gndprop/dgist/blk-socket/ksocket/Module.symvers'
+EXTRA_LDFLAGS := -I/home/suho/socket-blk-mq/ksocket
+KBUILD_EXTRA_SYMBOLS='/home/suho/socket-blk-mq/ksocket/Module.symvers'
 
 all: module write server
 

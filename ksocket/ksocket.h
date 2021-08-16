@@ -16,6 +16,8 @@
 #ifndef _ksocket_h_
 #define _ksocket_h_
 
+#include <linux/types.h>
+
 struct socket;
 struct sockaddr;
 struct in_addr;
