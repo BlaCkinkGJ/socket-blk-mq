@@ -32,11 +32,17 @@ static char databuf[4096];
 static int send_metadata(char *metadata, struct request *rq,
 		loff_t pos, unsigned long b_len)
 {
+	int ret;
 	metadata[0] = rq_data_dir(rq);
 	memcpy(metadata+DATAOFFSET, &pos, 8);
 	memcpy(metadata+DATASIZE, &b_len, 8);
 
-	return ksend(sockfd_cli, metadata, METASZ, MSG_MORE);
+	ret = ksend(sockfd_cli, metadata, METASZ, MSG_MORE);
+
+	printk("metadata: pos: %llu, b_len: %lu, ret: %d/%d",
+		pos, b_len, ret, METASZ);
+
+	return ret;
 }
 
 static int read_data(char *metadata) {
@@ -46,6 +52,8 @@ static int read_data(char *metadata) {
 	memcpy(&size, metadata+DATASIZE, 8);
 
 	len = krecv(sockfd_cli, databuf, size, MSG_WAITALL);
+
+	printk("read: %s", databuf);
 
 	databuf[size] = '\0';
 
@@ -68,6 +76,8 @@ static int write_data(char *metadata, void *b_buf) {
 	memcpy(buf, b_buf, size);
 
 	len = ksend(sockfd_cli, buf, size, MSG_WAITALL);
+
+	printk("write: %s", buf);
 
 	kfree(buf);
 
@@ -136,6 +146,7 @@ static int dev_open(struct block_device *bd, fmode_t mode) {
 		printk(KERN_ERR "dev open error");
 		return -ENXIO;
 	}
+	printk("dev open");
 	atomic_inc(&dev->open_counter);
 	return 0;
 }
@@ -144,6 +155,7 @@ static void dev_release(struct gendisk *gd, fmode_t mode) {
 	block_dev_t *dev = gd->private_data;
 	if (dev == NULL)
 		return;
+	printk("dev release");
 	atomic_dec(&dev->open_counter);
 }
 
@@ -306,6 +318,8 @@ static int __init blkdev_init(void) {
 	if ((ret = blkdev_add_device()) != SUCCESS)
 		unregister_blkdev(blkdev_major, BLKDEV_NAME);
 
+	printk("dev init");
+
 	return ret;
 }
 
@@ -314,6 +328,8 @@ static void __exit blkdev_exit(void) {
 	if (blkdev_major > 0)
 		unregister_blkdev(blkdev_major, BLKDEV_NAME);
 	kclose(sockfd_cli);
+
+	printk("dev exit");
 }
 
 module_init(blkdev_init);

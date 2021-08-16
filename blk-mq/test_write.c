@@ -14,26 +14,27 @@
 #define BUF_LEN 1024
 #define DEV_NAME "/dev/socketdev0"
 
-int main() {
-	static char buf[BUF_LEN];
-	int fd;
-	int i;
-	off_t off;
+char buf[BUF_LEN];
+int fd;
+int i;
+off_t off;
 
-	if ((fd = open(DEV_NAME, O_RDWR | O_SYNC | O_DIRECT)) < 0) {
+int main() {
+	if ((fd = open(DEV_NAME, O_RDWR | O_SYNC)) < 0) {
 		perror("open error");
 		return -1;
 	}
 
-	for (i = 0; i < 10000; i++) {
-		sprintf(buf, "%d", i);
-		// lseek(fd, 0, SEEK_SET);
-		if (write(fd, buf, sizeof(int)) < 0) {
-			perror("write error");
-			return -1;
-		}
+	// sprintf(buf, "%d", 4);
+	sprintf(buf, "%s", "Hello World!");
+	lseek(fd, 0, SEEK_SET);
+	if (write(fd, buf, strlen(buf)) < 0) {
+		perror("write error");
+		goto out;
 	}
 
+	printf("write: %s\n", buf);
+out:
 	if (close(fd) != 0) {
 		perror("close error");
 		return -1;

@@ -1,19 +1,24 @@
 CC=gcc
-WRITE_OBJS=test.o
-WRITE_TEST=test
+READ_OBJS=test_read.o
+READ_TEST=test_read
+WRITE_OBJS=test_write.o
+WRITE_TEST=test_write
 SERVER_OBJS=usocket_srv.o
 SERVER_TEST=usocket_srv
 obj-m+=blkdev.o
 
-EXTRA_LDFLAGS := -I/home/suho/socket-blk-mq/ksocket
-KBUILD_EXTRA_SYMBOLS='/home/suho/socket-blk-mq/ksocket/Module.symvers'
+EXTRA_LDFLAGS := -I/home/suho/oslab/socket-blk-mq/ksocket
+KBUILD_EXTRA_SYMBOLS='/home/suho/oslab/socket-blk-mq/ksocket/Module.symvers'
 
-all: module write server
+all: module test_read test_write server
 
 module:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
-write: $(WRITE_OBJS)
+test_read: $(READ_OBJS)
+	$(CC) -o $(READ_TEST) $^
+
+test_write: $(WRITE_OBJS)
 	$(CC) -o $(WRITE_TEST) $^
 
 server: $(SERVER_OBJS)
@@ -21,4 +26,4 @@ server: $(SERVER_OBJS)
 
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
-	rm -rf $(WRITE_TEST) $(WRITE_OBJS) $(SERVER_OBJS) $(SERVER_TEST)
+	rm -rf $(READ_TEST) $(READ_OBJS) $(WRITE_TEST) $(WRITE_OBJS) $(SERVER_OBJS) $(SERVER_TEST)

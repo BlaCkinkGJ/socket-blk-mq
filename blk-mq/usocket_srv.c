@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-const char *file_path = "./data_file";
+const char *file_path = "/home/suho/oslab/socket-blk-mq/data_file";
 
 typedef unsigned long long u64;
 
@@ -74,6 +74,9 @@ int get_metadata(int sockfd, char *op, u64 *offset, u64 *size)
 	memcpy(offset, metadata+DATAOFFSET, 8);
 	memcpy(size, metadata+DATASIZE, 8);
 
+	printf("metadata: op(%c) offset(%llu) size(%llu)\n",
+		'0'+*op, *offset, *size);
+
 	return len == METASZ;
 }
 
@@ -90,8 +93,13 @@ int write_data(int sockfd, u64 offset, u64 size) {
 	}
 
 	f = fopen(file_path, "r+");
-	if (!f)
+	if (!f) {
+		perror("open error");
 		return 0;
+	}
+
+	printf("write: offset(%llu) size(%llu)\n", offset, size);
+	printf("data: %s\n", data);
 
 	fseek(f, offset, SEEK_SET);
 	fwrite(data, sizeof(char), size, f);
@@ -113,9 +121,13 @@ int read_data(int sockfd, u64 offset, u64 size) {
 	if (!f)
 		return 0;
 
+	printf("read: offset(%llu) size(%llu)\n", offset, size);
+
 	fseek(f, offset, SEEK_SET);
 	fread(data, sizeof(char), size, f);
 	fclose(f);
+
+	printf("data: %s\n", data);
 
 	if ((len = send(sockfd, data, size, MSG_WAITALL)) < 0) {
 		perror("send failed");
@@ -132,6 +144,8 @@ int main() {
 	int sockfd;
 	char op;
 	u64 offset, size;
+
+	printf("server listen %d...\n", PORT);
 
 	sockfd = socket_init();
 
