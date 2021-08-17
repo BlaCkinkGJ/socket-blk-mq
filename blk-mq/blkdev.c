@@ -27,8 +27,6 @@ static ksocket_t sockfd_cli;
 static struct sockaddr_in addr_srv;
 static int addr_len;
 
-static char databuf[4096];
-
 static int send_metadata(char *metadata, struct request *rq,
 		loff_t pos, unsigned long b_len)
 {
@@ -45,17 +43,15 @@ static int send_metadata(char *metadata, struct request *rq,
 	return ret;
 }
 
-static int read_data(char *metadata) {
+static int read_data(char *metadata, void *b_buf) {
 	int len;
 	u64 size;
 
 	memcpy(&size, metadata+DATASIZE, 8);
 
-	len = krecv(sockfd_cli, databuf, size, MSG_WAITALL);
+	len = krecv(sockfd_cli, b_buf, size, MSG_WAITALL);
 
-	printk("read: %s", databuf);
-
-	databuf[size] = '\0';
+	printk("read: %s", (char *)b_buf);
 
 	return len;
 }
@@ -109,7 +105,7 @@ static int do_request(struct request *rq, unsigned int *nr_bytes) {
 
 		switch (metadata[0]) {
 		case READ:
-			*nr_bytes += read_data(metadata);
+			*nr_bytes += read_data(metadata, b_buf);
 			break;
 		case WRITE:
 			*nr_bytes += write_data(metadata, b_buf);
@@ -120,6 +116,8 @@ static int do_request(struct request *rq, unsigned int *nr_bytes) {
 		pos += b_len;
 		*nr_bytes += b_len;
 	}
+
+	printk("results: nr_bytes(%u)", *nr_bytes);
 
 	return ret;
 }
