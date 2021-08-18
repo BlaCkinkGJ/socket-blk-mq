@@ -23,14 +23,15 @@
 static int blkdev_major = 0;
 static block_dev_t *blkdev_dev = NULL;
 
-static ksocket_t sockfd_cli;
 static struct sockaddr_in addr_srv;
 static int addr_len;
 
-static int send_metadata(char *metadata, struct request *rq,
+static int send_metadata(ksocket_t sockfd_cli, struct request *rq,
 		loff_t pos, unsigned long b_len)
 {
+	char metadata[METASZ];
 	int ret;
+
 	metadata[0] = rq_data_dir(rq);
 	memcpy(metadata+DATAOFFSET, &pos, 8);
 	memcpy(metadata+DATASIZE, &b_len, 8);
@@ -43,79 +44,94 @@ static int send_metadata(char *metadata, struct request *rq,
 	return ret;
 }
 
-static int read_data(char *metadata, void *b_buf) {
+static int read_data(ksocket_t sockfd_cli, u64 size, void *buf, struct request *rq) {
+	struct bio_vec bvec;
+	struct req_iterator iter;
 	int len;
-	u64 size;
+	loff_t pos = 0;
 
-	memcpy(&size, metadata+DATASIZE, 8);
+	len = krecv(sockfd_cli, buf, size, MSG_WAITALL);
 
-	len = krecv(sockfd_cli, b_buf, size, MSG_WAITALL);
+	rq_for_each_segment(bvec, rq, iter) {
+		unsigned long b_len = bvec.bv_len;
+		void *b_buf = page_address(bvec.bv_page) + bvec.bv_offset;
 
-	printk("read: %s", (char *)b_buf);
+		memcpy(b_buf, buf+pos, b_len);
+
+		pos += b_len;
+	}
+	printk("read: %s", (char *)buf);
 
 	return len;
 }
 
-static int write_data(char *metadata, void *b_buf) {
+static int write_data(ksocket_t sockfd_cli, u64 size, void *buf, struct request *rq) {
+	struct bio_vec bvec;
+	struct req_iterator iter;
 	int len;
-	char *buf;
-	u64 size;
+	loff_t pos = 0;
 
-	memcpy(&size, metadata+DATASIZE, 8);
+	rq_for_each_segment(bvec, rq, iter) {
+		unsigned long b_len = bvec.bv_len;
+		void *b_buf = page_address(bvec.bv_page) + bvec.bv_offset;
 
-	buf = kmalloc(size, GFP_KERNEL);
-	if (buf == NULL) {
-		printk("kamlloc error");
-		return 0;
+		memcpy(buf+pos, b_buf, b_len);
+
+		pos += b_len;
 	}
 
-	memcpy(buf, b_buf, size);
-
 	len = ksend(sockfd_cli, buf, size, MSG_WAITALL);
-
-	printk("write: %s", buf);
-
-	kfree(buf);
+	printk("write: %s", (char *)buf);
 
 	return len;
 }
 
 static int do_request(struct request *rq, unsigned int *nr_bytes) {
 	int ret = SUCCESS;
-	struct bio_vec bvec;
-	struct req_iterator iter;
-	block_dev_t *dev = rq->q->queuedata;
 	loff_t pos = blk_rq_pos(rq) << SECTOR_SHIFT;
-	loff_t dev_size = (loff_t)(dev->capacity << SECTOR_SHIFT);
-	char metadata[METASZ];
+	char *buf = NULL;
+	ksocket_t sockfd_cli;
+	u64 size = blk_rq_bytes(rq);
 
-	rq_for_each_segment(bvec, rq, iter) {
-		unsigned long b_len = bvec.bv_len;
-		void *b_buf = page_address(bvec.bv_page) + bvec.bv_offset;
-
-		if ((pos + b_len) > dev_size)
-			b_len = (unsigned long)(dev_size - pos);
-		if (b_len < 0)
-			b_len = 0;
-
-		if (send_metadata(metadata, rq, pos, b_len) != METASZ) {
-			printk("send metadata error");
-			continue;
-		}
-
-		switch (metadata[0]) {
-		case READ:
-			*nr_bytes += read_data(metadata, b_buf);
-			break;
-		case WRITE:
-			*nr_bytes += write_data(metadata, b_buf);
-		default:
-			break;
-		}
-
-		pos += b_len;
-		*nr_bytes += b_len;
+	buf = kmalloc(size, GFP_KERNEL);
+	if (buf == NULL) {
+		printk("buf alloc error\n");
+		return -ENOMEM;
 	}
+
+	sockfd_cli = ksocket(AF_INET, SOCK_STREAM, 0);
+	if (sockfd_cli == NULL) {
+		printk("socket create error\n");
+		kfree(buf);
+		return -1;
+	}
+
+	if (kconnect(sockfd_cli, (struct sockaddr*)&addr_srv, addr_len) < 0) {
+		printk("socket connect error\n");
+		kfree(buf);
+		return -1;
+	}
+
+	if (send_metadata(sockfd_cli, rq, pos, size) != METASZ) {
+		printk("send metadata error");
+		kfree(buf);
+		return -1;
+	}
+
+	switch (rq_data_dir(rq)) {
+	case READ:
+		read_data(sockfd_cli, size, buf, rq);
+		break;
+	case WRITE:
+		write_data(sockfd_cli, size, buf, rq);
+	default:
+		break;
+	}
+
+	*nr_bytes += size;
+
+	kclose(sockfd_cli);
+	kfree(buf);
 
 	printk("results: nr_bytes(%u)", *nr_bytes);
 
@@ -186,20 +202,11 @@ static const struct block_device_operations blk_fops = {
 
 static int blkdev_alloc_buffer(block_dev_t *dev) {
 	dev->capacity = BLKDEV_BUFSIZ >> SECTOR_SHIFT;
-	dev->data = kmalloc(dev->capacity << SECTOR_SHIFT, GFP_KERNEL);
-	if (dev->data == NULL) {
-		printk(KERN_ERR "kmalloc error");
-		return -ENOMEM;
-	}
 	return SUCCESS;
 }
 
 static void blkdev_free_buffer(block_dev_t *dev) {
-	if (dev->data) {
-		kfree(dev->data);
-		dev->data = NULL;
-		dev->capacity = 0;
-	}
+	dev->capacity = 0;
 }
 
 static int blkdev_add_device(void) {
@@ -296,17 +303,6 @@ static int __init blkdev_init(void) {
 	addr_srv.sin_addr.s_addr = inet_addr(SERV_ADDR);
 	addr_len = sizeof(struct sockaddr_in);
 
-	sockfd_cli = ksocket(AF_INET, SOCK_STREAM, 0);
-	if (sockfd_cli == NULL) {
-		printk("socket create error\n");
-		return -1;
-	}
-
-	if (kconnect(sockfd_cli, (struct sockaddr*)&addr_srv, addr_len) < 0) {
-		printk("socket connect error\n");
-		return -1;
-	}
-
 	blkdev_major = register_blkdev(blkdev_major, BLKDEV_NAME);
 	if (blkdev_major <= 0) {
 		printk(KERN_ERR "register_blkdev error");
@@ -323,9 +319,9 @@ static int __init blkdev_init(void) {
 
 static void __exit blkdev_exit(void) {
 	blkdev_remove_device();
+
 	if (blkdev_major > 0)
 		unregister_blkdev(blkdev_major, BLKDEV_NAME);
-	kclose(sockfd_cli);
 
 	printk("dev exit");
 }

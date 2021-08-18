@@ -7,11 +7,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-const char *file_path = "/home/suho/oslab/socket-blk-mq/data_file";
+const char *file_path = "/mnt/nvme/data_file";
 
 typedef unsigned long long u64;
 
 #define PORT		4444
+#define NUMCLIENT	50
 /* op(1B), offset(8B), size(8B) */
 #define METASZ		17
 #define DATAOFFSET	1
@@ -19,19 +20,20 @@ typedef unsigned long long u64;
 #define READ		0
 #define WRITE		1
 
-int socket_init()
-{
-	int sockfd, newsocket;
-	int opt = 1;
-	struct sockaddr_in addr_srv;
-	int addrlen = sizeof(addr_srv);
+int server_fd;
+struct sockaddr_in addr_srv;
+int addrlen = sizeof(addr_srv);
 
-	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+void socket_init()
+{
+	int opt = 1;
+
+	if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		perror("socket creation failed");
 		exit(EXIT_FAILURE);
 	}
 
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
 				&opt, sizeof(opt))) {
 		perror("set socket failed");
 		exit(EXIT_FAILURE);
@@ -41,31 +43,23 @@ int socket_init()
 	addr_srv.sin_addr.s_addr = INADDR_ANY;
 	addr_srv.sin_port = htons(PORT);
 
-	if (bind(sockfd, (struct sockaddr *)&addr_srv, sizeof(addr_srv)) < 0) {
+	if (bind(server_fd, (struct sockaddr *)&addr_srv, sizeof(addr_srv)) < 0) {
 		perror("bind failed");
 		exit(EXIT_FAILURE);
 	}
 
-	if (listen(sockfd, 1) < 0) {
+	if (listen(server_fd, NUMCLIENT) < 0) {
 		perror("listen failed");
 		exit(EXIT_FAILURE);
 	}
-
-	if ((newsocket = accept(sockfd, (struct sockaddr *)&addr_srv,
-					(socklen_t *)&addrlen)) < 0) {
-		perror("accept failed");
-		exit(EXIT_FAILURE);
-	}
-
-	return newsocket;
 }
 
-int get_metadata(int sockfd, char *op, u64 *offset, u64 *size)
+int get_metadata(int client_fd, char *op, u64 *offset, u64 *size)
 {
 	char metadata[METASZ];
 	int len;
 
-	if ((len = recv(sockfd, metadata, METASZ, MSG_WAITALL)) < 0) {
+	if ((len = recv(client_fd, metadata, METASZ, MSG_WAITALL)) < 0) {
 		perror("recv failed");
 		return -1;
 	}
@@ -80,14 +74,14 @@ int get_metadata(int sockfd, char *op, u64 *offset, u64 *size)
 	return len == METASZ;
 }
 
-int write_data(int sockfd, u64 offset, u64 size) {
+int write_data(int client_fd, u64 offset, u64 size) {
 	socklen_t addr_len, len;
         char *data;
 	FILE *f;
 
 	data = (char *)malloc(sizeof(char) * size);
 
-	if ((len = recv(sockfd, data, size, MSG_WAITALL)) < 0) {
+	if ((len = recv(client_fd, data, size, MSG_WAITALL)) < 0) {
 		perror("recv failed");
 		return -1;
 	}
@@ -110,7 +104,7 @@ int write_data(int sockfd, u64 offset, u64 size) {
 	return len;
 }
 
-int read_data(int sockfd, u64 offset, u64 size) {
+int read_data(int client_fd, u64 offset, u64 size) {
 	int len;
         char *data;
 	FILE *f;
@@ -127,9 +121,9 @@ int read_data(int sockfd, u64 offset, u64 size) {
 	fread(data, sizeof(char), size, f);
 	fclose(f);
 
-	printf("data: %s\n", data);
+	printf("  data: %s\n", data);
 
-	if ((len = send(sockfd, data, size, MSG_WAITALL)) < 0) {
+	if ((len = send(client_fd, data, size, MSG_WAITALL)) < 0) {
 		perror("send failed");
 		return 0;
 	}
@@ -141,23 +135,48 @@ int read_data(int sockfd, u64 offset, u64 size) {
 }
 
 int main() {
-	int sockfd;
 	char op;
 	u64 offset, size;
+	int client_fd;
+	int pid;
 
 	printf("server listen %d...\n", PORT);
 
-	sockfd = socket_init();
+	socket_init();
 
-	while (get_metadata(sockfd, &op, &offset, &size)) {
-		switch (op) {
-		case READ:
-			read_data(sockfd, offset, size);
-			break;
-		case WRITE:
-			write_data(sockfd, offset, size);
-		default:
-		break;
+	while (1) {
+		if ((client_fd = accept(server_fd, (struct sockaddr *)&addr_srv,
+						(socklen_t *)&addrlen)) < 0) {
+			perror("accept failed");
+			exit(EXIT_FAILURE);
+		}
+
+		if ((pid=fork()) == 0) {
+			close(server_fd);
+
+			get_metadata(client_fd, &op, &offset, &size);
+
+			switch (op) {
+				case READ:
+					read_data(client_fd, offset, size);
+					break;
+				case WRITE:
+					write_data(client_fd, offset, size);
+				default:
+					break;
+			}
+
+			close(client_fd);
+
+			exit(0);
+		} else if (pid < 0) {
+			perror("fork error");
+		} else {
+			close(client_fd);
 		}
 	}
+
+	close(server_fd);
+
+	return 0;
 }
