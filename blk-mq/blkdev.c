@@ -13,6 +13,8 @@
 #include <linux/socket.h>
 #include <linux/uaccess.h>
 
+#define BLKDEV_DEBUG	0
+
 /* op(1B), offset(8B), size(8B) */
 #define METASZ		17
 #define DATAOFFSET	1
@@ -20,11 +22,12 @@
 #define READ		0
 #define WRITE		1
 
-static int blkdev_major = 0;
-static block_dev_t *blkdev_dev = NULL;
-
+static ksocket_t sockfd_clis[32];
 static struct sockaddr_in addr_srv;
 static int addr_len;
+
+static int blkdev_major = 0;
+static block_dev_t *blkdev_dev = NULL;
 
 static int send_metadata(ksocket_t sockfd_cli, struct request *rq,
 		loff_t pos, unsigned long b_len)
@@ -36,10 +39,13 @@ static int send_metadata(ksocket_t sockfd_cli, struct request *rq,
 	memcpy(metadata+DATAOFFSET, &pos, 8);
 	memcpy(metadata+DATASIZE, &b_len, 8);
 
-	ret = ksend(sockfd_cli, metadata, METASZ, MSG_MORE);
+	ret = ksend(sockfd_cli, metadata, METASZ,
+			rq_data_dir(rq) == WRITE ? MSG_MORE : 0);
 
+#if BLKDEV_DEBUG
 	printk("metadata: pos: %llu, b_len: %lu, ret: %d/%d",
-		pos, b_len, ret, METASZ);
+			pos, b_len, ret, METASZ);
+#endif
 
 	return ret;
 }
@@ -60,7 +66,10 @@ static int read_data(ksocket_t sockfd_cli, u64 size, void *buf, struct request *
 
 		pos += b_len;
 	}
+
+#if BLKDEV_DEBUG
 	printk("read: %s", (char *)buf);
+#endif
 
 	return len;
 }
@@ -81,7 +90,13 @@ static int write_data(ksocket_t sockfd_cli, u64 size, void *buf, struct request 
 	}
 
 	len = ksend(sockfd_cli, buf, size, MSG_WAITALL);
+
+#if BLKDEV_DEBUG
 	printk("write: %s", (char *)buf);
+#endif
+	len = krecv(sockfd_cli, buf, 1, MSG_WAITALL);
+	if (((char *)buf)[0] == '1')
+		len = 0;
 
 	return len;
 }
@@ -90,8 +105,8 @@ static int do_request(struct request *rq, unsigned int *nr_bytes) {
 	int ret = SUCCESS;
 	loff_t pos = blk_rq_pos(rq) << SECTOR_SHIFT;
 	char *buf = NULL;
-	ksocket_t sockfd_cli;
 	u64 size = blk_rq_bytes(rq);
+	int cpu = smp_processor_id();
 
 	buf = kmalloc(size, GFP_KERNEL);
 	if (buf == NULL) {
@@ -99,41 +114,29 @@ static int do_request(struct request *rq, unsigned int *nr_bytes) {
 		return -ENOMEM;
 	}
 
-	sockfd_cli = ksocket(AF_INET, SOCK_STREAM, 0);
-	if (sockfd_cli == NULL) {
-		printk("socket create error\n");
-		kfree(buf);
-		return -1;
-	}
-
-	if (kconnect(sockfd_cli, (struct sockaddr*)&addr_srv, addr_len) < 0) {
-		printk("socket connect error\n");
-		kfree(buf);
-		return -1;
-	}
-
-	if (send_metadata(sockfd_cli, rq, pos, size) != METASZ) {
+	if (send_metadata(sockfd_clis[cpu], rq, pos, size) != METASZ) {
 		printk("send metadata error");
 		kfree(buf);
 		return -1;
 	}
 
 	switch (rq_data_dir(rq)) {
-	case READ:
-		read_data(sockfd_cli, size, buf, rq);
-		break;
-	case WRITE:
-		write_data(sockfd_cli, size, buf, rq);
-	default:
-		break;
+		case READ:
+			read_data(sockfd_clis[cpu], size, buf, rq);
+			break;
+		case WRITE:
+			write_data(sockfd_clis[cpu], size, buf, rq);
+		default:
+			break;
 	}
 
 	*nr_bytes += size;
 
-	kclose(sockfd_cli);
 	kfree(buf);
 
+#if BLKDEV_DEBUG
 	printk("results: nr_bytes(%u)", *nr_bytes);
+#endif
 
 	return ret;
 }
@@ -160,7 +163,9 @@ static int dev_open(struct block_device *bd, fmode_t mode) {
 		printk(KERN_ERR "dev open error");
 		return -ENXIO;
 	}
+#if BLKDEV_DEBUG
 	printk("dev open");
+#endif
 	atomic_inc(&dev->open_counter);
 	return 0;
 }
@@ -169,7 +174,9 @@ static void dev_release(struct gendisk *gd, fmode_t mode) {
 	block_dev_t *dev = gd->private_data;
 	if (dev == NULL)
 		return;
+#if BLKDEV_DEBUG
 	printk("dev release");
+#endif
 	atomic_dec(&dev->open_counter);
 }
 
@@ -238,14 +245,14 @@ static int blkdev_add_device(void) {
 		dev->queue = q;
 		dev->queue->queuedata = dev;
 
- 		/* minor is 1 */
+		/* minor is 1 */
 		if ((disk = alloc_disk(1)) == NULL) {
 			printk(KERN_ERR "alloc_disk error");
 			ret = -ENOMEM;
 			break;
 		}
 
- 		/* only one partition */
+		/* only one partition */
 		disk->flags |= GENHD_FL_NO_PART_SCAN;
 		disk->flags |= GENHD_FL_REMOVABLE;
 		disk->major = blkdev_major;
@@ -296,6 +303,7 @@ static void blkdev_remove_device(void) {
 
 static int __init blkdev_init(void) {
 	int ret = SUCCESS;
+	int i;
 
 	memset(&addr_srv, 0, sizeof(addr_srv));
 	addr_srv.sin_family = AF_INET;
@@ -303,27 +311,51 @@ static int __init blkdev_init(void) {
 	addr_srv.sin_addr.s_addr = inet_addr(SERV_ADDR);
 	addr_len = sizeof(struct sockaddr_in);
 
+	for (i=0; i<32; i++) {
+		sockfd_clis[i] = ksocket(AF_INET, SOCK_STREAM, 0);
+		if (sockfd_clis[i] == NULL) {
+			printk("socket create error");
+			return -ENOMEM;
+		}
+
+		if (kconnect(sockfd_clis[i], (struct sockaddr*)&addr_srv, addr_len) < 0) {
+			printk("socket connect error");
+			return -ENOMEM;
+		}
+	}
+
 	blkdev_major = register_blkdev(blkdev_major, BLKDEV_NAME);
 	if (blkdev_major <= 0) {
 		printk(KERN_ERR "register_blkdev error");
+		for (i=0; i<32; i++)
+			kclose(sockfd_clis[i]);
+
 		return -EBUSY;
 	}
 
-	if ((ret = blkdev_add_device()) != SUCCESS)
+	if ((ret = blkdev_add_device()) != SUCCESS) {
 		unregister_blkdev(blkdev_major, BLKDEV_NAME);
+		for (i=0; i<32; i++)
+			kclose(sockfd_clis[i]);
+	}
 
-	printk("dev init");
+	printk("%s init", BLKDEV_NAME);
 
 	return ret;
 }
 
 static void __exit blkdev_exit(void) {
+	int i;
+
 	blkdev_remove_device();
 
 	if (blkdev_major > 0)
 		unregister_blkdev(blkdev_major, BLKDEV_NAME);
 
-	printk("dev exit");
+	for (i=0; i<32; i++)
+		kclose(sockfd_clis[i]);
+
+	printk("%s exit", BLKDEV_NAME);
 }
 
 module_init(blkdev_init);

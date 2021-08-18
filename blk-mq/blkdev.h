@@ -22,7 +22,7 @@
 #endif
 
 #define BLKDEV_NAME "socketdev"
-#define BLKDEV_BUFSIZ (1024 * 1024 * PAGE_SIZE) // 4GB
+#define BLKDEV_BUFSIZ (25 * 1024 * 1024 * PAGE_SIZE) // 100GB
 
 #define SERV_ADDR	"127.0.0.1"
 #define SERV_PORT	4444
