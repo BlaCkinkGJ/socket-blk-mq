@@ -9,7 +9,7 @@
 
 #define SERV_DEBUG	0
 
-const char *file_path = "/mnt/nvme/data_file";
+const char *file_path = "/run/media/mmcblk0p2/data_file";
 
 typedef unsigned long long u64;
 

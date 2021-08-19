@@ -1,10 +1,10 @@
 [global]
 iodepth=32
 filename=/dev/socketdev0
-size=100G
+size=512MB
 runtime=30
 time_based
-numjobs=8
+numjobs=2
 direct=1
 group_reporting
 
