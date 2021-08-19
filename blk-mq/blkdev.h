@@ -21,8 +21,11 @@
 #define SUCCESS 0
 #endif
 
-#define BLKDEV_NAME "pr0gr4m-blkdev"
-#define BLKDEV_BUFSIZ (16 * PAGE_SIZE)
+#define BLKDEV_NAME "socketdev"
+#define BLKDEV_BUFSIZ (1024 * 1024 * 1024) // 1GB
+
+#define SERV_ADDR	"10.42.0.47"
+#define SERV_PORT	4444
 
 typedef struct block_cmd {
 } block_cmd_t;
